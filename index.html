@@ -38,9 +38,10 @@
             </div>
             <h1 class="font-bold text-lg tracking-tight">DuoChat</h1>
         </div>
-        <div id="status-container" class="flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full">
+        <div id="status-container" class="flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full cursor-pointer group" onclick="location.reload()">
             <span id="status-dot" class="w-2 h-2 rounded-full bg-slate-300"></span>
             <span id="status-text" class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Offline</span>
+            <i data-lucide="refresh-cw" class="w-3 h-3 text-slate-400 hidden group-hover:block"></i>
         </div>
     </header>
 
@@ -49,17 +50,22 @@
         
         <!-- Connection Dashboard (Visible until connected) -->
         <div id="connection-dashboard" class="p-6 flex-1 flex flex-col items-center justify-center text-center space-y-6">
-            <div class="space-y-2">
+            <div id="id-section" class="space-y-2">
                 <p class="text-xs font-bold text-slate-400 uppercase tracking-widest">Your Private ID</p>
                 <div class="flex items-center gap-2 bg-slate-100 p-3 rounded-2xl border border-slate-200">
-                    <code id="my-id-display" class="font-mono font-bold text-indigo-600 text-lg">Generating...</code>
+                    <code id="my-id-display" class="font-mono font-bold text-indigo-600 text-lg">Connecting...</code>
                     <button onclick="copyMyId()" class="p-2 hover:bg-white rounded-lg transition-colors text-slate-400">
                         <i data-lucide="copy" class="w-4 h-4"></i>
                     </button>
                 </div>
             </div>
 
-            <div class="w-full max-w-xs space-y-3">
+            <div id="error-message" class="hidden w-full max-w-xs p-4 bg-red-50 border border-red-100 rounded-xl text-red-600 text-xs text-center space-y-2">
+                <p id="error-text">Unable to reach the network.</p>
+                <button onclick="location.reload()" class="font-bold underline">Retry Connection</button>
+            </div>
+
+            <div id="connect-section" class="w-full max-w-xs space-y-3">
                 <div class="relative py-2">
                     <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-200"></div></div>
                     <span class="relative bg-white px-2 text-[10px] text-slate-400 font-bold">CONNECT TO PARTNER</span>
@@ -102,27 +108,40 @@
             msgInput: document.getElementById('msg-input'),
             form: document.getElementById('chat-form'),
             statusDot: document.getElementById('status-dot'),
-            statusText: document.getElementById('status-text')
+            statusText: document.getElementById('status-text'),
+            errorDiv: document.getElementById('error-message'),
+            errorText: document.getElementById('error-text')
         };
 
         // --- Logic ---
 
         const encrypt = (t) => CryptoJS.AES.encrypt(t, password).toString();
         const decrypt = (c) => {
-            try { return CryptoJS.AES.decrypt(c, password).toString(CryptoJS.enc.Utf8) || "⚠️ Decryption Failed (Wrong Password)"; }
-            catch(e) { return "❌ Error"; }
+            try { 
+                const bytes = CryptoJS.AES.decrypt(c, password);
+                const originalText = bytes.toString(CryptoJS.enc.Utf8);
+                if (!originalText) return "⚠️ Decryption Failed (Wrong Password)";
+                return originalText;
+            }
+            catch(e) { return "❌ Decryption Error"; }
         };
 
         const init = () => {
-            peer = new Peer();
+            ui.statusText.innerText = "Connecting...";
+            ui.statusDot.className = "w-2 h-2 rounded-full bg-slate-300 animate-pulse";
+            
+            // Initializing PeerJS with default settings
+            peer = new Peer({
+                debug: 1 // Only show errors
+            });
             
             peer.on('open', (id) => {
                 myId = id;
                 ui.myId.innerText = id;
                 ui.statusText.innerText = "Ready";
                 ui.statusDot.className = "w-2 h-2 rounded-full bg-amber-400";
+                ui.errorDiv.classList.add('hidden');
 
-                // Auto-connect if ID is in URL
                 const urlId = new URLSearchParams(window.location.search).get('partner');
                 if (urlId && urlId !== id) {
                     ui.partnerId.value = urlId;
@@ -135,29 +154,70 @@
                 setupConnection(c);
             });
 
+            peer.on('disconnected', () => {
+                ui.statusText.innerText = "Server Lost";
+                ui.statusDot.className = "w-2 h-2 rounded-full bg-red-400";
+                peer.reconnect();
+            });
+
             peer.on('error', (e) => {
-                console.error(e);
-                ui.statusText.innerText = "Network Error";
+                console.error("PeerJS Error Type:", e.type);
                 ui.statusDot.className = "w-2 h-2 rounded-full bg-red-500";
+                ui.statusText.innerText = "Network Error";
+                ui.errorDiv.classList.remove('hidden');
+                
+                if (e.type === 'peer-unavailable') {
+                    ui.errorText.innerText = "Partner ID not found. Are they online?";
+                } else if (e.type === 'network') {
+                    ui.errorText.innerText = "Connection lost. Please check your internet.";
+                } else if (e.type === 'server-error') {
+                    ui.errorText.innerText = "Signaling server unavailable. Try again in a moment.";
+                } else {
+                    ui.errorText.innerText = "An unexpected network error occurred.";
+                }
             });
         };
 
         const connect = (id) => {
             if (!id || id === myId) return;
             ui.statusText.innerText = "Connecting...";
-            setupConnection(peer.connect(id));
+            const connection = peer.connect(id, { reliable: true });
+            setupConnection(connection);
         };
 
         const setupConnection = (c) => {
             conn = c;
+            
+            // Handle connection timeout
+            const timeout = setTimeout(() => {
+                if (ui.statusText.innerText === "Connecting...") {
+                    ui.statusText.innerText = "Timeout";
+                    ui.errorDiv.classList.remove('hidden');
+                    ui.errorText.innerText = "Connection took too long. Check partner's ID.";
+                }
+            }, 10000);
+
             conn.on('open', () => {
+                clearTimeout(timeout);
                 ui.statusDot.className = "w-2 h-2 rounded-full bg-green-500";
                 ui.statusText.innerText = "Connected";
                 ui.dashboard.classList.add('hidden');
                 ui.chat.classList.remove('hidden');
             });
+
             conn.on('data', (data) => addMessage(data, false));
-            conn.on('close', () => location.reload()); // Simple reset
+            
+            conn.on('close', () => {
+                ui.statusText.innerText = "Partner Left";
+                ui.statusDot.className = "w-2 h-2 rounded-full bg-slate-300";
+                setTimeout(() => location.reload(), 2000);
+            });
+
+            conn.on('error', (err) => {
+                console.error("Conn Error:", err);
+                ui.errorDiv.classList.remove('hidden');
+                ui.errorText.innerText = "Failed to link with partner.";
+            });
         };
 
         const addMessage = (cipher, isMe) => {
@@ -195,10 +255,22 @@
         };
 
         window.copyMyId = () => {
-            navigator.clipboard.writeText(myId);
-            const original = ui.myId.innerText;
-            ui.myId.innerText = "Copied!";
-            setTimeout(() => ui.myId.innerText = original, 1000);
+            if (!myId) return;
+            
+            // Fallback for copy command in iframe/sandboxed environments
+            const textArea = document.createElement("textarea");
+            textArea.value = myId;
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                const original = ui.myId.innerText;
+                ui.myId.innerText = "Copied!";
+                setTimeout(() => ui.myId.innerText = original, 1000);
+            } catch (err) {
+                console.error('Copy failed', err);
+            }
+            document.body.removeChild(textArea);
         };
 
         lucide.createIcons();
