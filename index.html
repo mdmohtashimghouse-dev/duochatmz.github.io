@@ -3,312 +3,204 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DuoChat P2P - No Firebase</title>
+    <title>DuoChat - Simple P2P</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-    <!-- PeerJS for Peer-to-Peer Connection -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body { font-family: 'Inter', sans-serif; }
         .message-in { animation: slideIn 0.2s ease-out forwards; }
         @keyframes slideIn {
-            from { opacity: 0; transform: translateY(8px); }
+            from { opacity: 0; transform: translateY(5px); }
             to { opacity: 1; transform: translateY(0); }
         }
-        .setup-overlay { backdrop-filter: blur(12px); }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900 h-screen flex flex-col overflow-hidden">
 
-    <!-- Setup Modal -->
-    <div id="setup-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 setup-overlay">
-        <div class="bg-white rounded-3xl p-8 shadow-2xl max-w-md w-full border border-slate-100">
-            <div class="bg-indigo-600 w-16 h-16 rounded-2xl flex items-center justify-center mb-6 text-white shadow-lg shadow-indigo-200">
-                <i data-lucide="shield-check" class="w-8 h-8"></i>
-            </div>
-            <h2 class="text-2xl font-bold mb-2">P2P Secure Chat</h2>
-            <p class="text-slate-500 text-sm mb-6 leading-relaxed">
-                Connect directly to your partner. No servers, no logs. Enter a shared password to encrypt your messages.
-            </p>
-            
-            <div class="space-y-4">
-                <div>
-                    <label class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Encryption Key</label>
-                    <input 
-                        type="password" 
-                        id="setup-key-input"
-                        placeholder="Shared secret password"
-                        class="w-full bg-slate-100 border-none rounded-xl px-5 py-3.5 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                    />
-                </div>
-                <button id="start-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-4 rounded-xl transition-all shadow-lg shadow-indigo-200 flex items-center justify-center gap-2">
-                    Start Encrypted Session
-                </button>
-            </div>
+    <!-- Step 1: Password Setup -->
+    <div id="setup-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl p-6 shadow-2xl max-w-sm w-full">
+            <h2 class="text-xl font-bold mb-4">Set Chat Password</h2>
+            <p class="text-slate-500 text-sm mb-4">Both you and your partner must use the same password to read messages.</p>
+            <input type="password" id="pass-input" placeholder="Enter password" class="w-full bg-slate-100 border-none rounded-xl px-4 py-3 mb-4 outline-none focus:ring-2 focus:ring-indigo-500">
+            <button id="start-btn" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 transition-colors">Start Chatting</button>
         </div>
     </div>
 
     <!-- Header -->
-    <header class="bg-white border-b border-slate-200 px-4 py-3 sm:px-6 flex items-center justify-between shadow-sm z-10">
-        <div class="flex items-center gap-3">
-            <div class="bg-indigo-600 p-2 rounded-xl text-white">
-                <i data-lucide="zap" class="w-6 h-6"></i>
+    <header class="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between shadow-sm shrink-0">
+        <div class="flex items-center gap-2">
+            <div class="bg-indigo-600 p-1.5 rounded-lg text-white">
+                <i data-lucide="zap" class="w-5 h-5"></i>
             </div>
-            <div>
-                <h1 class="font-bold text-base sm:text-lg leading-tight flex items-center gap-1.5">
-                    DuoChat P2P
-                </h1>
-                <div class="flex items-center gap-1.5">
-                    <span id="status-indicator" class="w-2 h-2 rounded-full bg-amber-400"></span>
-                    <span id="status-text" class="text-[10px] sm:text-xs text-slate-500 font-medium tracking-wide">Initializing...</span>
-                </div>
-            </div>
+            <h1 class="font-bold text-lg tracking-tight">DuoChat</h1>
         </div>
-
-        <button id="copy-btn" class="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg transition-all text-xs sm:text-sm font-medium border border-slate-200 active:scale-95">
-            <i data-lucide="copy" class="w-4 h-4" id="copy-icon"></i>
-            <span id="copy-text">Invite Partner</span>
-        </button>
+        <div id="status-container" class="flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full">
+            <span id="status-dot" class="w-2 h-2 rounded-full bg-slate-300"></span>
+            <span id="status-text" class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Offline</span>
+        </div>
     </header>
 
-    <!-- Main Chat Content -->
-    <main id="messages-container" class="flex-1 overflow-y-auto p-4 space-y-4 max-w-4xl w-full mx-auto flex flex-col">
-        <!-- P2P Instruction Card -->
-        <div id="welcome-screen" class="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div class="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 max-w-sm">
-                <div id="waiting-icon" class="bg-amber-50 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 text-amber-600 animate-pulse">
-                    <i data-lucide="radio" class="w-8 h-8"></i>
-                </div>
-                <h2 id="welcome-title" class="text-xl font-bold mb-2 text-slate-800">Waiting for partner</h2>
-                <p id="welcome-desc" class="text-slate-500 text-sm mb-4 leading-relaxed">
-                    Share your link or ID. <strong>Note:</strong> You must keep this page open until your partner joins.
-                </p>
-                
-                <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4 select-all text-xs text-slate-500 break-all font-mono" id="display-link">
-                    Generating link...
-                </div>
-
-                <div class="flex flex-col gap-2">
-                    <button onclick="copyInviteLink()" class="w-full bg-indigo-600 text-white hover:bg-indigo-700 font-semibold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg shadow-indigo-100">
-                        <i data-lucide="link" class="w-4 h-4"></i> Copy Link
+    <!-- Main View -->
+    <main class="flex-1 overflow-hidden flex flex-col max-w-2xl w-full mx-auto bg-white sm:border-x border-slate-200">
+        
+        <!-- Connection Dashboard (Visible until connected) -->
+        <div id="connection-dashboard" class="p-6 flex-1 flex flex-col items-center justify-center text-center space-y-6">
+            <div class="space-y-2">
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-widest">Your Private ID</p>
+                <div class="flex items-center gap-2 bg-slate-100 p-3 rounded-2xl border border-slate-200">
+                    <code id="my-id-display" class="font-mono font-bold text-indigo-600 text-lg">Generating...</code>
+                    <button onclick="copyMyId()" class="p-2 hover:bg-white rounded-lg transition-colors text-slate-400">
+                        <i data-lucide="copy" class="w-4 h-4"></i>
                     </button>
-                    <div class="relative flex items-center py-2">
-                        <div class="flex-grow border-t border-slate-200"></div>
-                        <span class="flex-shrink mx-4 text-slate-400 text-[10px] font-bold uppercase tracking-widest">or manually join</span>
-                        <div class="flex-grow border-t border-slate-200"></div>
-                    </div>
-                    <div class="flex gap-2">
-                        <input type="text" id="manual-id-input" placeholder="Paste Partner ID" class="flex-1 text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 outline-none focus:ring-2 focus:ring-indigo-500">
-                        <button id="manual-connect-btn" class="bg-slate-800 text-white px-4 py-2 rounded-xl text-xs font-bold">Connect</button>
-                    </div>
                 </div>
             </div>
-        </div>
-        <div id="message-list" class="space-y-4"></div>
-        <div id="anchor"></div>
-    </main>
 
-    <!-- Footer -->
-    <footer class="p-4 bg-white border-t border-slate-200">
-        <form id="chat-form" class="max-w-4xl mx-auto flex gap-3 opacity-50 pointer-events-none transition-opacity">
-            <input 
-                type="text" 
-                id="message-input"
-                placeholder="Connect with a partner to chat..."
-                autocomplete="off"
-                class="flex-1 bg-slate-100 border-none rounded-2xl px-5 py-3.5 focus:ring-2 focus:ring-indigo-500 outline-none"
-            />
-            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white p-3.5 rounded-2xl shadow-lg flex items-center justify-center">
-                <i data-lucide="send" class="w-5 h-5"></i>
-            </button>
-        </form>
-        <div class="max-w-4xl mx-auto mt-2 text-center">
-            <p id="peer-id-display" class="text-[9px] text-slate-400 uppercase tracking-widest font-bold">YOUR ID: LOADING...</p>
+            <div class="w-full max-w-xs space-y-3">
+                <div class="relative py-2">
+                    <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-200"></div></div>
+                    <span class="relative bg-white px-2 text-[10px] text-slate-400 font-bold">CONNECT TO PARTNER</span>
+                </div>
+                <input type="text" id="partner-id-input" placeholder="Paste Partner ID here" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-center outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+                <button id="connect-btn" class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-black transition-all shadow-lg">Connect to Partner</button>
+                <p class="text-[10px] text-slate-400">Make sure your partner has the app open!</p>
+            </div>
         </div>
-    </footer>
+
+        <!-- Chat Messages (Hidden until connected) -->
+        <div id="chat-window" class="hidden flex-1 flex flex-col overflow-hidden">
+            <div id="message-list" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+            
+            <form id="chat-form" class="p-4 border-t border-slate-100 flex gap-2">
+                <input type="text" id="msg-input" placeholder="Type a message..." autocomplete="off" class="flex-1 bg-slate-100 border-none rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-indigo-500">
+                <button type="submit" class="bg-indigo-600 text-white p-3 rounded-xl shadow-md hover:bg-indigo-700 active:scale-95 transition-all">
+                    <i data-lucide="send" class="w-5 h-5"></i>
+                </button>
+            </form>
+        </div>
+    </main>
 
     <script>
         let peer = null;
         let conn = null;
-        let encryptionKey = '';
+        let password = '';
         let myId = '';
-        let partnerId = '';
 
-        const elements = {
-            setupModal: document.getElementById('setup-modal'),
-            setupKey: document.getElementById('setup-key-input'),
-            startBtn: document.getElementById('start-btn'),
-            statusInd: document.getElementById('status-indicator'),
-            statusText: document.getElementById('status-text'),
-            messageList: document.getElementById('message-list'),
-            messageInput: document.getElementById('message-input'),
-            chatForm: document.getElementById('chat-form'),
-            welcomeScreen: document.getElementById('welcome-screen'),
-            peerDisplay: document.getElementById('peer-id-display'),
-            displayLink: document.getElementById('display-link'),
-            manualIdInput: document.getElementById('manual-id-input'),
-            manualConnectBtn: document.getElementById('manual-connect-btn'),
-            anchor: document.getElementById('anchor')
+        const ui = {
+            setup: document.getElementById('setup-modal'),
+            pass: document.getElementById('pass-input'),
+            start: document.getElementById('start-btn'),
+            myId: document.getElementById('my-id-display'),
+            partnerId: document.getElementById('partner-id-input'),
+            connect: document.getElementById('connect-btn'),
+            dashboard: document.getElementById('connection-dashboard'),
+            chat: document.getElementById('chat-window'),
+            msgList: document.getElementById('message-list'),
+            msgInput: document.getElementById('msg-input'),
+            form: document.getElementById('chat-form'),
+            statusDot: document.getElementById('status-dot'),
+            statusText: document.getElementById('status-text')
         };
 
-        // 1. Encryption Helpers
-        const encrypt = (text) => CryptoJS.AES.encrypt(text, encryptionKey).toString();
-        const decrypt = (cipher) => {
-            try {
-                const bytes = CryptoJS.AES.decrypt(cipher, encryptionKey);
-                const result = bytes.toString(CryptoJS.enc.Utf8);
-                if (!result) return "[Decryption Failed - Check Password]";
-                return result;
-            } catch(e) { return "[Decryption Error]"; }
+        // --- Logic ---
+
+        const encrypt = (t) => CryptoJS.AES.encrypt(t, password).toString();
+        const decrypt = (c) => {
+            try { return CryptoJS.AES.decrypt(c, password).toString(CryptoJS.enc.Utf8) || "⚠️ Decryption Failed (Wrong Password)"; }
+            catch(e) { return "❌ Error"; }
         };
 
-        // 2. PeerJS Logic
-        const initPeer = () => {
-            peer = new Peer(); 
-
+        const init = () => {
+            peer = new Peer();
+            
             peer.on('open', (id) => {
                 myId = id;
-                elements.peerDisplay.innerText = `YOUR ID: ${id}`;
-                updateDisplayLink(id);
-                elements.statusText.innerText = "Ready for partner";
-                
-                const urlParams = new URLSearchParams(window.location.search);
-                const urlPartner = urlParams.get('partner');
-                if (urlPartner) {
-                    elements.statusText.innerText = "Joining via link...";
-                    connectToPartner(urlPartner);
+                ui.myId.innerText = id;
+                ui.statusText.innerText = "Ready";
+                ui.statusDot.className = "w-2 h-2 rounded-full bg-amber-400";
+
+                // Auto-connect if ID is in URL
+                const urlId = new URLSearchParams(window.location.search).get('partner');
+                if (urlId && urlId !== id) {
+                    ui.partnerId.value = urlId;
+                    connect(urlId);
                 }
             });
 
-            peer.on('connection', (incomingConn) => {
-                if (conn) {
-                    incomingConn.close(); 
-                    return;
-                }
-                setupConnection(incomingConn);
+            peer.on('connection', (c) => {
+                if (conn) return c.close();
+                setupConnection(c);
             });
 
-            peer.on('error', (err) => {
-                console.error(err);
-                if (err.type === 'peer-unavailable') {
-                    elements.statusText.innerText = "Partner ID not found";
-                } else {
-                    elements.statusText.innerText = "Connection Error";
-                }
-                elements.statusInd.className = "w-2 h-2 rounded-full bg-red-500";
+            peer.on('error', (e) => {
+                console.error(e);
+                ui.statusText.innerText = "Network Error";
+                ui.statusDot.className = "w-2 h-2 rounded-full bg-red-500";
             });
         };
 
-        const updateDisplayLink = (id) => {
-            // Robust link generation
-            const url = new URL(window.location.origin + window.location.pathname);
-            url.searchParams.set('partner', id);
-            elements.displayLink.innerText = url.toString();
-        };
-
-        const connectToPartner = (id) => {
+        const connect = (id) => {
             if (!id || id === myId) return;
-            elements.statusText.innerText = "Connecting...";
-            const connection = peer.connect(id);
-            setupConnection(connection);
+            ui.statusText.innerText = "Connecting...";
+            setupConnection(peer.connect(id));
         };
 
         const setupConnection = (c) => {
             conn = c;
-            
             conn.on('open', () => {
-                elements.statusInd.className = "w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]";
-                elements.statusText.innerText = "Connected";
-                elements.chatForm.classList.remove('opacity-50', 'pointer-events-none');
-                elements.messageInput.placeholder = "Write a secure message...";
-                elements.welcomeScreen.classList.add('hidden');
+                ui.statusDot.className = "w-2 h-2 rounded-full bg-green-500";
+                ui.statusText.innerText = "Connected";
+                ui.dashboard.classList.add('hidden');
+                ui.chat.classList.remove('hidden');
             });
-
-            conn.on('data', (data) => {
-                addMessage(data, false);
-            });
-
-            conn.on('close', () => {
-                elements.statusText.innerText = "Partner disconnected";
-                elements.statusInd.className = "w-2 h-2 rounded-full bg-slate-300";
-                elements.chatForm.classList.add('opacity-50', 'pointer-events-none');
-                conn = null;
-            });
+            conn.on('data', (data) => addMessage(data, false));
+            conn.on('close', () => location.reload()); // Simple reset
         };
 
-        // 3. UI Actions
-        const addMessage = (encryptedData, isMe) => {
-            const text = decrypt(encryptedData);
-            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            
-            const msgHtml = `
-                <div class="flex w-full ${isMe ? 'justify-end' : 'justify-start'} message-in">
-                    <div class="max-w-[85%] flex flex-col ${isMe ? 'items-end' : 'items-start'}">
-                        <div class="px-4 py-2.5 rounded-2xl text-[14px] shadow-sm ${
-                            isMe ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-slate-800 border border-slate-200 rounded-tl-none'
-                        }">
-                            ${escape(text)}
-                        </div>
-                        <span class="text-[9px] text-slate-400 mt-1 px-1 font-bold uppercase tracking-tighter">${time}</span>
-                    </div>
+        const addMessage = (cipher, isMe) => {
+            const text = decrypt(cipher);
+            const div = document.createElement('div');
+            div.className = `flex w-full ${isMe ? 'justify-end' : 'justify-start'} message-in`;
+            div.innerHTML = `
+                <div class="max-w-[80%] px-4 py-2 rounded-2xl text-sm shadow-sm ${isMe ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-100 text-slate-800 rounded-tl-none'}">
+                    ${text.replace(/</g, "&lt;")}
                 </div>
             `;
-            elements.messageList.insertAdjacentHTML('beforeend', msgHtml);
-            elements.anchor.scrollIntoView({ behavior: 'smooth' });
+            ui.msgList.appendChild(div);
+            ui.msgList.scrollTop = ui.msgList.scrollHeight;
         };
 
-        const escape = (str) => {
-            const p = document.createElement('p');
-            p.textContent = str;
-            return p.innerHTML;
+        // --- Events ---
+
+        ui.start.onclick = () => {
+            password = ui.pass.value.trim();
+            if (password.length < 1) return;
+            ui.setup.classList.add('hidden');
+            init();
         };
 
-        elements.chatForm.addEventListener('submit', (e) => {
+        ui.connect.onclick = () => connect(ui.partnerId.value.trim());
+
+        ui.form.onsubmit = (e) => {
             e.preventDefault();
-            const val = elements.messageInput.value.trim();
+            const val = ui.msgInput.value.trim();
             if (!val || !conn) return;
-
-            const encrypted = encrypt(val);
-            conn.send(encrypted);
-            addMessage(encrypted, true);
-            elements.messageInput.value = '';
-        });
-
-        elements.manualConnectBtn.addEventListener('click', () => {
-            const targetId = elements.manualIdInput.value.trim();
-            if (targetId) connectToPartner(targetId);
-        });
-
-        elements.startBtn.addEventListener('click', () => {
-            const key = elements.setupKey.value.trim();
-            if (key.length < 4) {
-                alert("Password must be at least 4 characters.");
-                return;
-            }
-            encryptionKey = key;
-            elements.setupModal.classList.add('hidden');
-            initPeer();
-        });
-
-        window.copyInviteLink = () => {
-            const link = elements.displayLink.innerText;
-            const textArea = document.createElement("textarea");
-            textArea.value = link;
-            document.body.appendChild(textArea);
-            textArea.select();
-            document.execCommand('copy');
-            document.body.removeChild(textArea);
-
-            const btnText = document.getElementById('copy-text');
-            btnText.innerText = "Copied!";
-            setTimeout(() => btnText.innerText = "Invite Partner", 2000);
+            const cipher = encrypt(val);
+            conn.send(cipher);
+            addMessage(cipher, true);
+            ui.msgInput.value = '';
         };
 
-        document.getElementById('copy-btn').addEventListener('click', window.copyInviteLink);
+        window.copyMyId = () => {
+            navigator.clipboard.writeText(myId);
+            const original = ui.myId.innerText;
+            ui.myId.innerText = "Copied!";
+            setTimeout(() => ui.myId.innerText = original, 1000);
+        };
+
         lucide.createIcons();
     </script>
 </body>
