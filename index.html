@@ -20,16 +20,6 @@
 </head>
 <body class="bg-slate-50 text-slate-900 h-screen flex flex-col overflow-hidden">
 
-    <!-- Step 1: Password Setup -->
-    <div id="setup-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
-        <div class="bg-white rounded-2xl p-6 shadow-2xl max-w-sm w-full">
-            <h2 class="text-xl font-bold mb-4">Set Chat Password</h2>
-            <p class="text-slate-500 text-sm mb-4">Both you and your partner must use the same password to read messages.</p>
-            <input type="password" id="pass-input" placeholder="Enter password" class="w-full bg-slate-100 border-none rounded-xl px-4 py-3 mb-4 outline-none focus:ring-2 focus:ring-indigo-500">
-            <button id="start-btn" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 transition-colors">Start Chatting</button>
-        </div>
-    </div>
-
     <!-- Header -->
     <header class="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between shadow-sm shrink-0">
         <div class="flex items-center gap-2">
@@ -50,13 +40,17 @@
         
         <!-- Connection Dashboard (Visible until connected) -->
         <div id="connection-dashboard" class="p-6 flex-1 flex flex-col items-center justify-center text-center space-y-6">
-            <div id="id-section" class="space-y-2">
-                <p class="text-xs font-bold text-slate-400 uppercase tracking-widest">Your Private ID</p>
-                <div class="flex items-center gap-2 bg-slate-100 p-3 rounded-2xl border border-slate-200">
-                    <code id="my-id-display" class="font-mono font-bold text-indigo-600 text-lg">Connecting...</code>
-                    <button onclick="copyMyId()" class="p-2 hover:bg-white rounded-lg transition-colors text-slate-400">
-                        <i data-lucide="copy" class="w-4 h-4"></i>
-                    </button>
+            <div id="id-section" class="space-y-4 w-full">
+                <div class="bg-indigo-50 p-6 rounded-3xl border border-indigo-100 space-y-3">
+                    <p class="text-xs font-bold text-indigo-400 uppercase tracking-widest">Share this link to start</p>
+                    <div class="flex items-center gap-2 bg-white p-3 rounded-2xl border border-indigo-200">
+                        <code id="invite-link-display" class="font-mono text-xs text-indigo-600 truncate flex-1 text-left">Generating link...</code>
+                        <button onclick="copyInviteLink()" class="bg-indigo-600 text-white p-2.5 rounded-xl hover:bg-indigo-700 transition-all flex items-center gap-2">
+                            <i data-lucide="copy" class="w-4 h-4"></i>
+                            <span class="text-xs font-bold px-1">Copy Link</span>
+                        </button>
+                    </div>
+                    <p class="text-[10px] text-indigo-400 font-medium">This link includes a unique encryption key for privacy.</p>
                 </div>
             </div>
 
@@ -65,14 +59,13 @@
                 <button onclick="location.reload()" class="font-bold underline">Retry Connection</button>
             </div>
 
-            <div id="connect-section" class="w-full max-w-xs space-y-3">
+            <div id="connect-section" class="w-full max-w-xs space-y-3 pt-4">
                 <div class="relative py-2">
                     <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-200"></div></div>
-                    <span class="relative bg-white px-2 text-[10px] text-slate-400 font-bold">CONNECT TO PARTNER</span>
+                    <span class="relative bg-white px-2 text-[10px] text-slate-400 font-bold uppercase">Manual Connect</span>
                 </div>
-                <input type="text" id="partner-id-input" placeholder="Paste Partner ID here" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-center outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
-                <button id="connect-btn" class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-black transition-all shadow-lg">Connect to Partner</button>
-                <p class="text-[10px] text-slate-400">Make sure your partner has the app open!</p>
+                <input type="text" id="partner-id-input" placeholder="Paste ID or Link here" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-center text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+                <button id="connect-btn" class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-black transition-all shadow-lg">Connect</button>
             </div>
         </div>
 
@@ -92,14 +85,11 @@
     <script>
         let peer = null;
         let conn = null;
-        let password = '';
+        let sessionKey = '';
         let myId = '';
 
         const ui = {
-            setup: document.getElementById('setup-modal'),
-            pass: document.getElementById('pass-input'),
-            start: document.getElementById('start-btn'),
-            myId: document.getElementById('my-id-display'),
+            inviteLink: document.getElementById('invite-link-display'),
             partnerId: document.getElementById('partner-id-input'),
             connect: document.getElementById('connect-btn'),
             dashboard: document.getElementById('connection-dashboard'),
@@ -115,12 +105,12 @@
 
         // --- Logic ---
 
-        const encrypt = (t) => CryptoJS.AES.encrypt(t, password).toString();
+        const encrypt = (t) => CryptoJS.AES.encrypt(t, sessionKey).toString();
         const decrypt = (c) => {
             try { 
-                const bytes = CryptoJS.AES.decrypt(c, password);
+                const bytes = CryptoJS.AES.decrypt(c, sessionKey);
                 const originalText = bytes.toString(CryptoJS.enc.Utf8);
-                if (!originalText) return "⚠️ Decryption Failed (Wrong Password)";
+                if (!originalText) return "⚠️ Encryption mismatch (Partner key different)";
                 return originalText;
             }
             catch(e) { return "❌ Decryption Error"; }
@@ -130,22 +120,33 @@
             ui.statusText.innerText = "Connecting...";
             ui.statusDot.className = "w-2 h-2 rounded-full bg-slate-300 animate-pulse";
             
-            // Initializing PeerJS with default settings
-            peer = new Peer({
-                debug: 1 // Only show errors
-            });
+            peer = new Peer({ debug: 1 });
             
             peer.on('open', (id) => {
                 myId = id;
-                ui.myId.innerText = id;
                 ui.statusText.innerText = "Ready";
                 ui.statusDot.className = "w-2 h-2 rounded-full bg-amber-400";
                 ui.errorDiv.classList.add('hidden');
 
-                const urlId = new URLSearchParams(window.location.search).get('partner');
-                if (urlId && urlId !== id) {
-                    ui.partnerId.value = urlId;
-                    connect(urlId);
+                const params = new URLSearchParams(window.location.search);
+                const partnerFromUrl = params.get('partner');
+                const keyFromUrl = params.get('key');
+
+                // If joining via link, use the key from the link
+                if (keyFromUrl) {
+                    sessionKey = keyFromUrl;
+                } else if (!sessionKey) {
+                    // If creating the link, generate a new random key
+                    sessionKey = crypto.randomUUID().split('-')[0];
+                }
+
+                const url = new URL(window.location.href.split('?')[0]);
+                url.searchParams.set('partner', id);
+                url.searchParams.set('key', sessionKey);
+                ui.inviteLink.innerText = url.toString();
+
+                if (partnerFromUrl && partnerFromUrl !== id) {
+                    connect(partnerFromUrl);
                 }
             });
 
@@ -154,70 +155,42 @@
                 setupConnection(c);
             });
 
-            peer.on('disconnected', () => {
-                ui.statusText.innerText = "Server Lost";
-                ui.statusDot.className = "w-2 h-2 rounded-full bg-red-400";
-                peer.reconnect();
-            });
-
             peer.on('error', (e) => {
-                console.error("PeerJS Error Type:", e.type);
+                console.error("PeerJS Error:", e.type);
                 ui.statusDot.className = "w-2 h-2 rounded-full bg-red-500";
                 ui.statusText.innerText = "Network Error";
                 ui.errorDiv.classList.remove('hidden');
-                
-                if (e.type === 'peer-unavailable') {
-                    ui.errorText.innerText = "Partner ID not found. Are they online?";
-                } else if (e.type === 'network') {
-                    ui.errorText.innerText = "Connection lost. Please check your internet.";
-                } else if (e.type === 'server-error') {
-                    ui.errorText.innerText = "Signaling server unavailable. Try again in a moment.";
-                } else {
-                    ui.errorText.innerText = "An unexpected network error occurred.";
-                }
+                ui.errorText.innerText = e.type === 'peer-unavailable' ? "Partner not found. Link might be expired." : "Connection failed.";
             });
         };
 
-        const connect = (id) => {
+        const connect = (input) => {
+            let id = input;
+            // Handle if they pasted the whole URL instead of just the ID
+            try {
+                if (input.includes('?')) {
+                    const url = new URL(input);
+                    id = url.searchParams.get('partner');
+                    const key = url.searchParams.get('key');
+                    if (key) sessionKey = key;
+                }
+            } catch(e) {}
+
             if (!id || id === myId) return;
             ui.statusText.innerText = "Connecting...";
-            const connection = peer.connect(id, { reliable: true });
-            setupConnection(connection);
+            setupConnection(peer.connect(id, { reliable: true }));
         };
 
         const setupConnection = (c) => {
             conn = c;
-            
-            // Handle connection timeout
-            const timeout = setTimeout(() => {
-                if (ui.statusText.innerText === "Connecting...") {
-                    ui.statusText.innerText = "Timeout";
-                    ui.errorDiv.classList.remove('hidden');
-                    ui.errorText.innerText = "Connection took too long. Check partner's ID.";
-                }
-            }, 10000);
-
             conn.on('open', () => {
-                clearTimeout(timeout);
-                ui.statusDot.className = "w-2 h-2 rounded-full bg-green-500";
+                ui.statusDot.className = "w-2 h-2 rounded-full bg-green-500 animate-none";
                 ui.statusText.innerText = "Connected";
                 ui.dashboard.classList.add('hidden');
                 ui.chat.classList.remove('hidden');
             });
-
             conn.on('data', (data) => addMessage(data, false));
-            
-            conn.on('close', () => {
-                ui.statusText.innerText = "Partner Left";
-                ui.statusDot.className = "w-2 h-2 rounded-full bg-slate-300";
-                setTimeout(() => location.reload(), 2000);
-            });
-
-            conn.on('error', (err) => {
-                console.error("Conn Error:", err);
-                ui.errorDiv.classList.remove('hidden');
-                ui.errorText.innerText = "Failed to link with partner.";
-            });
+            conn.on('close', () => location.reload());
         };
 
         const addMessage = (cipher, isMe) => {
@@ -235,13 +208,6 @@
 
         // --- Events ---
 
-        ui.start.onclick = () => {
-            password = ui.pass.value.trim();
-            if (password.length < 1) return;
-            ui.setup.classList.add('hidden');
-            init();
-        };
-
         ui.connect.onclick = () => connect(ui.partnerId.value.trim());
 
         ui.form.onsubmit = (e) => {
@@ -254,25 +220,23 @@
             ui.msgInput.value = '';
         };
 
-        window.copyMyId = () => {
-            if (!myId) return;
-            
-            // Fallback for copy command in iframe/sandboxed environments
+        window.copyInviteLink = () => {
+            const link = ui.inviteLink.innerText;
             const textArea = document.createElement("textarea");
-            textArea.value = myId;
+            textArea.value = link;
             document.body.appendChild(textArea);
             textArea.select();
-            try {
-                document.execCommand('copy');
-                const original = ui.myId.innerText;
-                ui.myId.innerText = "Copied!";
-                setTimeout(() => ui.myId.innerText = original, 1000);
-            } catch (err) {
-                console.error('Copy failed', err);
-            }
+            document.execCommand('copy');
             document.body.removeChild(textArea);
+            
+            const btnSpan = document.querySelector('button span');
+            const original = btnSpan.innerText;
+            btnSpan.innerText = "Copied!";
+            setTimeout(() => btnSpan.innerText = original, 2000);
         };
 
+        // Start automatically on load
+        init();
         lucide.createIcons();
     </script>
 </body>
