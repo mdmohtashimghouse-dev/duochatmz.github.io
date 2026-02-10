@@ -22,7 +22,7 @@
 <body class="bg-white text-slate-900 h-screen flex flex-col overflow-hidden">
 
     <!-- Header (Always Visible) -->
-    <header class="px-6 py-4 flex items-center justify-between z-10">
+    <header class="px-6 py-4 flex items-center justify-between z-10 shrink-0">
         <div class="flex items-center gap-2 cursor-pointer" onclick="location.href=location.pathname">
             <div class="bg-indigo-600 p-1.5 rounded-lg text-white">
                 <i data-lucide="message-circle" class="w-6 h-6"></i>
@@ -36,7 +36,7 @@
     </header>
 
     <!-- Main Content Area -->
-    <main class="flex-1 flex flex-col items-center justify-center p-6 relative">
+    <main class="flex-1 flex flex-col items-center justify-center p-6 relative overflow-hidden">
         
         <!-- View 1: Home (Landing Page) -->
         <div id="view-home" class="w-full max-w-4xl grid md:grid-cols-2 gap-12 items-center">
@@ -88,7 +88,7 @@
             <div class="pt-4 flex flex-col gap-3">
                 <div class="flex items-center gap-2 justify-center text-amber-500">
                     <div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></div>
-                    <span class="text-xs font-bold uppercase tracking-widest">Waiting for partner...</span>
+                    <span id="waiting-status-text" class="text-xs font-bold uppercase tracking-widest">Waiting for partner...</span>
                 </div>
                 <button onclick="location.reload()" class="text-slate-400 text-xs hover:text-slate-600 underline">Cancel</button>
             </div>
@@ -98,7 +98,7 @@
         <div id="view-chat" class="hidden w-full max-w-2xl h-full flex flex-col bg-white sm:border-x border-slate-200 animate-in fade-in">
             <div id="message-list" class="flex-1 overflow-y-auto p-4 space-y-4"></div>
             
-            <form id="chat-form" class="p-4 border-t border-slate-100 flex gap-3">
+            <form id="chat-form" class="p-4 border-t border-slate-100 flex gap-3 shrink-0">
                 <input type="text" id="msg-input" placeholder="Type a message..." autocomplete="off" class="flex-1 bg-slate-100 border-none rounded-2xl px-5 py-4 outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
                 <button type="submit" class="bg-indigo-600 text-white p-4 rounded-2xl shadow-lg hover:bg-indigo-700 active:scale-95 transition-all">
                     <i data-lucide="send" class="w-6 h-6"></i>
@@ -110,7 +110,7 @@
         <div id="toast-error" class="hidden fixed bottom-8 bg-red-600 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-4">
             <i data-lucide="alert-circle" class="w-5 h-5"></i>
             <span id="error-text" class="text-sm font-medium">Network error.</span>
-            <button onclick="location.reload()" class="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-md text-xs font-bold">Retry</button>
+            <button onclick="location.href=location.pathname" class="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-md text-xs font-bold">Retry</button>
         </div>
     </main>
 
@@ -119,32 +119,64 @@
         let conn = null;
         let sessionKey = '';
         let myId = '';
+        let connectionTimeout = null;
 
         const views = {
             home: document.getElementById('view-home'),
             waiting: document.getElementById('view-waiting'),
             chat: document.getElementById('view-chat'),
             status: document.getElementById('status-indicator'),
-            invite: document.getElementById('invite-link-text')
+            statusDot: document.getElementById('status-dot'),
+            statusText: document.getElementById('status-text'),
+            invite: document.getElementById('invite-link-text'),
+            errorToast: document.getElementById('toast-error'),
+            errorText: document.getElementById('error-text'),
+            waitingStatus: document.getElementById('waiting-status-text')
         };
 
         const encrypt = (t) => CryptoJS.AES.encrypt(t, sessionKey).toString();
         const decrypt = (c) => {
             try { 
                 const bytes = CryptoJS.AES.decrypt(c, sessionKey);
-                return bytes.toString(CryptoJS.enc.Utf8) || "⚠️ Decryption error.";
+                return bytes.toString(CryptoJS.enc.Utf8) || "⚠️ Decryption error (Check password/link).";
             } catch(e) { return "❌ Decryption failed."; }
+        };
+
+        const showError = (msg) => {
+            views.errorToast.classList.remove('hidden');
+            views.errorText.innerText = msg;
+            views.statusText.innerText = "Error";
+            views.statusDot.className = "w-2 h-2 rounded-full bg-red-500";
+            
+            // If the connection failed, let's stop any pulses or waiting animations
+            views.waitingStatus.innerText = "Connection Failed";
         };
 
         // Initialize connection
         const init = (partnerToConnect = null) => {
             views.status.classList.remove('hidden');
-            peer = new Peer({ debug: 1 });
+            views.errorToast.classList.add('hidden');
+            
+            // Clean up any existing peer
+            if (peer) {
+                peer.destroy();
+            }
+
+            peer = new Peer({
+                debug: 1,
+                config: {
+                    'iceServers': [
+                        { url: 'stun:stun.l.google.com:19302' },
+                        { url: 'stun:stun1.l.google.com:19302' },
+                        { url: 'stun:stun2.l.google.com:19302' }
+                    ]
+                }
+            });
 
             peer.on('open', (id) => {
                 myId = id;
-                document.getElementById('status-dot').className = "w-2 h-2 rounded-full bg-amber-400";
-                document.getElementById('status-text').innerText = "Ready";
+                views.statusDot.className = "w-2 h-2 rounded-full bg-amber-400";
+                views.statusText.innerText = "Ready";
 
                 // Setup encryption key
                 const params = new URLSearchParams(window.location.search);
@@ -168,8 +200,24 @@
             });
 
             peer.on('error', (e) => {
-                document.getElementById('toast-error').classList.remove('hidden');
-                document.getElementById('error-text').innerText = e.type === 'peer-unavailable' ? "Partner not found." : "Connection error.";
+                console.error("PeerJS Error:", e.type, e);
+                let message = "Connection error.";
+                
+                if (e.type === 'peer-unavailable') {
+                    message = "Partner not found. Are they online with the same ID?";
+                } else if (e.type === 'network') {
+                    message = "Network issue detected. Check your internet.";
+                } else if (e.type === 'server-error') {
+                    message = "Signaling server unreachable.";
+                } else if (e.type === 'browser-incompatible') {
+                    message = "Your browser does not support P2P chats.";
+                }
+                
+                showError(message);
+                if (connectionTimeout) {
+                    clearTimeout(connectionTimeout);
+                    connectionTimeout = null;
+                }
             });
         };
 
@@ -185,34 +233,68 @@
 
             let id = input;
             try {
+                // Handle pasting full links instead of just IDs
                 if (input.includes('partner=')) {
-                    const url = new URL(input.startsWith('http') ? input : 'https://x.com/' + input);
+                    const url = new URL(input.startsWith('http') ? input : 'https://' + input);
                     id = url.searchParams.get('partner');
                     const key = url.searchParams.get('key');
                     if (key) sessionKey = key;
                 }
-            } catch(e) {}
+            } catch(e) {
+                console.warn("Input parsing failed, treating as raw ID.");
+            }
 
             views.home.classList.add('hidden');
             init(id);
         };
 
         const connectToPartner = (id) => {
-            document.getElementById('status-text').innerText = "Linking...";
-            setupConnection(peer.connect(id, { reliable: true }));
+            // Sanitize ID
+            const targetId = id.trim();
+            if (!targetId) return;
+
+            views.statusText.innerText = "Linking...";
+            views.statusDot.className = "w-2 h-2 rounded-full bg-indigo-400 animate-pulse";
+            
+            // Set a timeout for the connection attempt
+            connectionTimeout = setTimeout(() => {
+                if (!conn || !conn.open) {
+                    showError("Connection timed out. Partner might be offline or ID is invalid.");
+                }
+            }, 12000);
+
+            try {
+                const connection = peer.connect(targetId, { reliable: true });
+                setupConnection(connection);
+            } catch (err) {
+                showError("Failed to initiate connection.");
+            }
         };
 
         const setupConnection = (c) => {
             conn = c;
+            
             conn.on('open', () => {
-                document.getElementById('status-dot').className = "w-2 h-2 rounded-full bg-green-500";
-                document.getElementById('status-text').innerText = "Secure";
+                if (connectionTimeout) clearTimeout(connectionTimeout);
+                views.statusDot.className = "w-2 h-2 rounded-full bg-green-500 animate-none";
+                views.statusText.innerText = "Secure";
                 views.home.classList.add('hidden');
                 views.waiting.classList.add('hidden');
                 views.chat.classList.remove('hidden');
+                views.errorToast.classList.add('hidden');
             });
+
             conn.on('data', (data) => addMessage(data, false));
-            conn.on('close', () => location.reload());
+            
+            conn.on('close', () => {
+                alert("Connection closed by partner.");
+                location.href = location.pathname;
+            });
+
+            conn.on('error', (err) => {
+                console.error("Connection Data Error:", err);
+                showError("Data link failed. Retry connecting.");
+            });
         };
 
         const addMessage = (cipher, isMe) => {
@@ -234,7 +316,7 @@
             e.preventDefault();
             const input = document.getElementById('msg-input');
             const val = input.value.trim();
-            if (!val || !conn) return;
+            if (!val || !conn || !conn.open) return;
             const cipher = encrypt(val);
             conn.send(cipher);
             addMessage(cipher, true);
@@ -260,8 +342,10 @@
         // Check if starting via link
         const params = new URLSearchParams(window.location.search);
         if (params.has('partner')) {
+            const partnerId = params.get('partner');
             views.home.classList.add('hidden');
-            init(params.get('partner'));
+            // Small delay to ensure DOM is ready and Lucide icons are processed
+            setTimeout(() => init(partnerId), 200);
         }
 
         lucide.createIcons();
